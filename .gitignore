@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 환경변수 파일
+.env
+*.env
+
+# 로그 파일
+logs/
+*.log
+
+# 데이터 파일
+data/
+*.json
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 임시 파일
+*.tmp
+*.temp
+
+# 백업 파일
+*.bak
+*.backup
+
+# 구글 드라이브 인증 파일
+config/google_credentials.json
+config/google_token.pickle 
