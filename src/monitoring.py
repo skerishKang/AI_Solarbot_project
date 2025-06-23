@@ -1,20 +1,19 @@
 """
-AI_Solarbot 모니터링 및 로깅 시스템
+AI_Solarbot 모니터링 및 로깅 시스템 (완전 메모리 기반)
 - 실시간 사용자 활동 추적
 - 성능 메트릭 수집
 - 에러 로깅 및 알림
 - 사용 패턴 분석
+로컬 파일 접근 없음 - 메모리에서만 관리
 """
 
 import json
-import os
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Any
-from pathlib import Path
 import logging
 from dataclasses import dataclass
-from collections import defaultdict
+from collections import defaultdict, deque
 
 @dataclass
 class UserActivity:
@@ -29,57 +28,42 @@ class UserActivity:
 
 class BotMonitor:
     def __init__(self):
-        self.data_dir = Path("../data")
-        self.data_dir.mkdir(exist_ok=True)
+        # 완전 메모리 기반 - 파일 저장 없음
         
-        self.activity_file = self.data_dir / "user_activity.json"
-        self.metrics_file = self.data_dir / "bot_metrics.json"
-        self.errors_file = self.data_dir / "error_log.json"
+        # 메모리 내 데이터 저장 (최대 크기 제한)
+        self.activities = deque(maxlen=1000)  # 최근 1000개 활동
+        self.errors = deque(maxlen=500)  # 최근 500개 에러
         
         # 메모리 내 통계
         self.daily_stats = defaultdict(int)
         self.command_stats = defaultdict(int)
         self.user_stats = defaultdict(lambda: {"commands": 0, "last_active": None})
         
-        # 로거 설정
+        # 로거 설정 (콘솔 출력만)
         self.setup_logger()
-        
-        # 기존 데이터 로드
-        self.load_existing_data()
     
     def setup_logger(self):
-        """전용 로거 설정"""
+        """전용 로거 설정 (콘솔 출력만)"""
         self.logger = logging.getLogger('BotMonitor')
         self.logger.setLevel(logging.INFO)
         
-        # 파일 핸들러
-        log_file = self.data_dir / "bot_monitor.log"
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.INFO)
-        
-        # 포맷터
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        file_handler.setFormatter(formatter)
-        
-        self.logger.addHandler(file_handler)
-    
-    def load_existing_data(self):
-        """기존 데이터 로드"""
-        try:
-            if self.metrics_file.exists():
-                with open(self.metrics_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.daily_stats.update(data.get('daily_stats', {}))
-                    self.command_stats.update(data.get('command_stats', {}))
-        except Exception as e:
-            self.logger.error(f"데이터 로드 실패: {e}")
+        # 콘솔 핸들러만 사용 (파일 저장 없음)
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            
+            # 포맷터
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            console_handler.setFormatter(formatter)
+            
+            self.logger.addHandler(console_handler)
     
     def log_user_activity(self, user_id: str, username: str, command: str, 
                          response_time: float, ai_model: str, success: bool, 
                          error_msg: str = ""):
-        """사용자 활동 로깅"""
+        """사용자 활동 로깅 (메모리 기반)"""
         activity = UserActivity(
             user_id=str(user_id),
             username=username or "Unknown",
@@ -91,51 +75,21 @@ class BotMonitor:
             error_msg=error_msg
         )
         
-        # 파일에 저장
-        self._save_activity(activity)
+        # 메모리에 저장
+        self.activities.append(activity)
         
         # 통계 업데이트
         self._update_stats(activity)
         
-        # 로그 기록
+        # 로그 기록 (콘솔 출력만)
         status = "SUCCESS" if success else "FAILED"
         self.logger.info(
             f"USER:{user_id} CMD:{command} STATUS:{status} "
             f"TIME:{response_time:.2f}s MODEL:{ai_model}"
         )
     
-    def _save_activity(self, activity: UserActivity):
-        """활동 데이터 파일 저장"""
-        try:
-            activities = []
-            if self.activity_file.exists():
-                with open(self.activity_file, 'r', encoding='utf-8') as f:
-                    activities = json.load(f)
-            
-            # 새 활동 추가
-            activities.append({
-                'user_id': activity.user_id,
-                'username': activity.username,
-                'command': activity.command,
-                'timestamp': activity.timestamp.isoformat(),
-                'response_time': activity.response_time,
-                'ai_model_used': activity.ai_model_used,
-                'success': activity.success,
-                'error_msg': activity.error_msg
-            })
-            
-            # 최근 1000개만 유지
-            if len(activities) > 1000:
-                activities = activities[-1000:]
-            
-            with open(self.activity_file, 'w', encoding='utf-8') as f:
-                json.dump(activities, f, ensure_ascii=False, indent=2)
-                
-        except Exception as e:
-            self.logger.error(f"활동 저장 실패: {e}")
-    
     def _update_stats(self, activity: UserActivity):
-        """통계 업데이트"""
+        """통계 업데이트 (메모리 기반)"""
         today = datetime.now().strftime('%Y-%m-%d')
         
         # 일일 통계
@@ -151,29 +105,10 @@ class BotMonitor:
         # 사용자 통계
         self.user_stats[activity.user_id]["commands"] += 1
         self.user_stats[activity.user_id]["last_active"] = activity.timestamp.isoformat()
-        
-        # 주기적 저장
-        self._save_metrics()
-    
-    def _save_metrics(self):
-        """메트릭 저장"""
-        try:
-            metrics = {
-                'daily_stats': dict(self.daily_stats),
-                'command_stats': dict(self.command_stats),
-                'user_stats': {k: dict(v) for k, v in self.user_stats.items()},
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            with open(self.metrics_file, 'w', encoding='utf-8') as f:
-                json.dump(metrics, f, ensure_ascii=False, indent=2)
-                
-        except Exception as e:
-            self.logger.error(f"메트릭 저장 실패: {e}")
     
     def log_error(self, error_type: str, error_msg: str, user_id: str = "", 
                   command: str = ""):
-        """에러 로깅"""
+        """에러 로깅 (메모리 기반)"""
         error_data = {
             'timestamp': datetime.now().isoformat(),
             'error_type': error_type,
@@ -182,25 +117,10 @@ class BotMonitor:
             'command': command
         }
         
-        try:
-            errors = []
-            if self.errors_file.exists():
-                with open(self.errors_file, 'r', encoding='utf-8') as f:
-                    errors = json.load(f)
-            
-            errors.append(error_data)
-            
-            # 최근 500개 에러만 유지
-            if len(errors) > 500:
-                errors = errors[-500:]
-            
-            with open(self.errors_file, 'w', encoding='utf-8') as f:
-                json.dump(errors, f, ensure_ascii=False, indent=2)
-            
-            self.logger.error(f"ERROR:{error_type} MSG:{error_msg} USER:{user_id}")
-            
-        except Exception as e:
-            self.logger.critical(f"에러 로깅 실패: {e}")
+        # 메모리에 저장
+        self.errors.append(error_data)
+        
+        self.logger.error(f"ERROR:{error_type} MSG:{error_msg} USER:{user_id}")
     
     def get_daily_report(self) -> str:
         """일일 리포트 생성"""
@@ -248,11 +168,23 @@ class BotMonitor:
     def get_performance_metrics(self) -> Dict[str, Any]:
         """성능 메트릭 반환"""
         try:
-            # 최근 활동 로드
+            # 최근 활동 로드 (메모리에서)
             activities = []
-            if self.activity_file.exists():
-                with open(self.activity_file, 'r', encoding='utf-8') as f:
-                    activities = json.load(f)
+            if self.activities:
+                # UserActivity 객체를 딕셔너리로 변환
+                activities = [
+                    {
+                        'user_id': activity.user_id,
+                        'username': activity.username,
+                        'command': activity.command,
+                        'timestamp': activity.timestamp.isoformat(),
+                        'response_time': activity.response_time,
+                        'ai_model_used': activity.ai_model_used,
+                        'success': activity.success,
+                        'error_msg': activity.error_msg
+                    }
+                    for activity in self.activities
+                ]
             
             # 최근 24시간 데이터 필터링
             recent_activities = [

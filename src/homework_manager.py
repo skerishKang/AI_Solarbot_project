@@ -1,33 +1,118 @@
 """
-AI_Solarbot - 팜솔라 과제 관리 시스템 (실제 교과서 구조 반영)
+homework_manager.py - 팜솔라 AI 교육과정 과제 관리 시스템 (완전 클라우드 기반)
+구글 드라이브 전용 - 로컬 파일 접근 없음
 """
 
-import os
 import json
-from datetime import datetime, timedelta
-import random
+import io
+from datetime import datetime
+from typing import Dict, List, Optional
+from src.google_drive_handler import drive_handler
+from src.user_drive_manager import user_drive_manager
 
 class HomeworkManager:
     def __init__(self):
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.homework_file = os.path.join(current_dir, "homework_data.json")
-        self.base_path = "G:\\Ddrive\\BatangD\\task\\workdiary\\36. 팜솔라\\수업"
-        self.homework_data = self.load_homework_data()
+        # 완전 클라우드 기반: 구글 드라이브에만 데이터 저장
+        self.homework_folder_name = "팜솔라_과제관리_시스템"
+        self.homework_data_file = "homework_data.json"
+        self.homework_data = None
         
-    def load_homework_data(self):
-        """과제 데이터 로드"""
+    def ensure_homework_folder(self) -> str:
+        """과제 관리 폴더 확인/생성"""
         try:
-            with open(self.homework_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
+            if not drive_handler.authenticate():
+                raise Exception("구글 드라이브 인증 실패")
+            
+            # 기존 폴더 검색
+            query = f"name='{self.homework_folder_name}' and mimeType='application/vnd.google-apps.folder'"
+            results = drive_handler.service.files().list(q=query, fields='files(id, name)').execute()
+            folders = results.get('files', [])
+            
+            if folders:
+                return folders[0]['id']
+            
+            # 폴더 생성
+            folder_metadata = {
+                'name': self.homework_folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = drive_handler.service.files().create(body=folder_metadata, fields='id').execute()
+            return folder.get('id')
+            
+        except Exception as e:
+            raise Exception(f"과제 폴더 생성 실패: {str(e)}")
+    
+    def load_homework_data(self) -> Dict:
+        """구글 드라이브에서 과제 데이터 로드"""
+        try:
+            folder_id = self.ensure_homework_folder()
+            
+            # 데이터 파일 검색
+            query = f"name='{self.homework_data_file}' and parents in '{folder_id}'"
+            results = drive_handler.service.files().list(q=query, fields='files(id, name)').execute()
+            files = results.get('files', [])
+            
+            if files:
+                # 기존 파일 읽기
+                file_id = files[0]['id']
+                content = drive_handler.service.files().get_media(fileId=file_id).execute()
+                return json.loads(content.decode('utf-8'))
+            else:
+                # 초기 데이터 생성
+                return self.initialize_homework_data()
+                
+        except Exception as e:
+            print(f"과제 데이터 로드 실패: {e}")
             return self.initialize_homework_data()
     
     def save_homework_data(self):
-        """과제 데이터 저장"""
-        with open(self.homework_file, 'w', encoding='utf-8') as f:
-            json.dump(self.homework_data, f, ensure_ascii=False, indent=2)
+        """구글 드라이브에 과제 데이터 저장"""
+        try:
+            folder_id = self.ensure_homework_folder()
+            content = json.dumps(self.homework_data, ensure_ascii=False, indent=2)
+            
+            # 기존 파일 검색
+            query = f"name='{self.homework_data_file}' and parents in '{folder_id}'"
+            results = drive_handler.service.files().list(q=query, fields='files(id, name)').execute()
+            files = results.get('files', [])
+            
+            if files:
+                # 기존 파일 업데이트
+                file_id = files[0]['id']
+                media_body = drive_handler.MediaIoBaseUpload(
+                    io.BytesIO(content.encode('utf-8')),
+                    mimetype='application/json'
+                )
+                drive_handler.service.files().update(
+                    fileId=file_id,
+                    media_body=media_body
+                ).execute()
+            else:
+                # 새 파일 생성
+                file_metadata = {
+                    'name': self.homework_data_file,
+                    'parents': [folder_id]
+                }
+                media_body = drive_handler.MediaIoBaseUpload(
+                    io.BytesIO(content.encode('utf-8')),
+                    mimetype='application/json'
+                )
+                drive_handler.service.files().create(
+                    body=file_metadata,
+                    media_body=media_body,
+                    fields='id'
+                ).execute()
+                
+        except Exception as e:
+            print(f"과제 데이터 저장 실패: {e}")
     
-    def initialize_homework_data(self):
+    def get_homework_data(self) -> Dict:
+        """과제 데이터 반환 (캐시 사용)"""
+        if self.homework_data is None:
+            self.homework_data = self.load_homework_data()
+        return self.homework_data
+    
+    def initialize_homework_data(self) -> Dict:
         """실제 교과서 구조에 맞는 초기 과제 데이터"""
         data = {
             "current_week": 1,
@@ -138,19 +223,20 @@ class HomeworkManager:
             }
         }
         
-        with open(self.homework_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            
+        # 구글 드라이브에 초기 데이터 저장
+        self.homework_data = data
+        self.save_homework_data()
         return data
     
     def get_current_homework(self) -> dict:
         """현재 과제 반환"""
-        week = str(self.homework_data["current_week"])
-        lesson = str(self.homework_data["current_lesson"])
+        data = self.get_homework_data()
+        week = str(data["current_week"])
+        lesson = str(data["current_lesson"])
         
-        if week in self.homework_data["weekly_homework"]:
-            if lesson in self.homework_data["weekly_homework"][week]:
-                homework = self.homework_data["weekly_homework"][week][lesson]
+        if week in data["weekly_homework"]:
+            if lesson in data["weekly_homework"][week]:
+                homework = data["weekly_homework"][week][lesson]
                 return {
                     "week": week,
                     "lesson": lesson,
@@ -161,19 +247,20 @@ class HomeworkManager:
     
     def advance_week(self) -> str:
         """진도 진행 - 1번째 → 2번째 → 다음주 1번째"""
-        current_week = self.homework_data["current_week"]
-        current_lesson = self.homework_data["current_lesson"]
+        data = self.get_homework_data()
+        current_week = data["current_week"]
+        current_lesson = data["current_lesson"]
         
         if current_lesson == 1:
-            self.homework_data["current_lesson"] = 2
+            data["current_lesson"] = 2
         else:
-            self.homework_data["current_week"] += 1
-            self.homework_data["current_lesson"] = 1
+            data["current_week"] += 1
+            data["current_lesson"] = 1
         
         self.save_homework_data()
         
-        new_week = self.homework_data["current_week"]
-        new_lesson = self.homework_data["current_lesson"]
+        new_week = data["current_week"]
+        new_lesson = data["current_lesson"]
         
         lesson_name = "1번째" if new_lesson == 1 else "2번째"
         prev_lesson_name = "1번째" if current_lesson == 1 else "2번째"
@@ -182,15 +269,17 @@ class HomeworkManager:
     
     def submit_homework(self, user_id: str, user_name: str, homework_content: str) -> str:
         """과제 제출"""
-        if user_id not in self.homework_data["student_progress"]:
-            self.homework_data["student_progress"][user_id] = {
+        data = self.get_homework_data()
+        
+        if user_id not in data["student_progress"]:
+            data["student_progress"][user_id] = {
                 "name": user_name,
                 "submissions": {},
                 "total_submissions": 0
             }
         
-        week = self.homework_data["current_week"]
-        lesson = self.homework_data["current_lesson"]
+        week = data["current_week"]
+        lesson = data["current_lesson"]
         submission_key = f"{week}_{lesson}"
         lesson_name = "1번째" if lesson == 1 else "2번째"
         
@@ -202,97 +291,118 @@ class HomeworkManager:
             "status": "submitted"
         }
         
-        self.homework_data["student_progress"][user_id]["submissions"][submission_key] = submission_data
-        self.homework_data["student_progress"][user_id]["total_submissions"] += 1
+        data["student_progress"][user_id]["submissions"][submission_key] = submission_data
+        data["student_progress"][user_id]["total_submissions"] += 1
         
         self.save_homework_data()
         
-        return f"""✅ 과제 제출 완료!
+        return f"""✅ **과제 제출 완료!**
 
-📚 제출 정보:
-• 과제: {week}주차 {lesson_name}
-• 제출 시간: {datetime.now().strftime('%Y-%m-%d %H:%M')}
-• 총 제출 횟수: {self.homework_data["student_progress"][user_id]["total_submissions"]}회
+👤 **제출자**: {user_name}
+📅 **과제**: {week}주차 {lesson_name}
+⏰ **제출 시간**: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+📝 **총 제출 횟수**: {data["student_progress"][user_id]["total_submissions"]}회
 
-🎉 수고하셨습니다! 피드백은 강사님 확인 후 제공드립니다."""
-    
+🎯 **다음 단계**: 
+강사의 피드백을 기다려주세요! 
+/progress 명령어로 진도를 확인할 수 있습니다."""
+
     def get_homework_by_week(self, week: int, lesson: int = None) -> dict:
-        """특정 주차 과제 반환"""
+        """특정 주차 과제 조회"""
+        data = self.get_homework_data()
         week_str = str(week)
         
-        if week_str not in self.homework_data["weekly_homework"]:
-            return {"error": f"{week}주차 과제가 없습니다."}
-        
-        if lesson:
-            lesson_str = str(lesson)
-            lesson_name = "1번째" if lesson == 1 else "2번째"
-            if lesson_str in self.homework_data["weekly_homework"][week_str]:
+        if week_str in data["weekly_homework"]:
+            if lesson is None:
                 return {
-                    "week": week_str,
-                    "lesson": lesson_str,
-                    "lesson_name": lesson_name,
-                    "homework": self.homework_data["weekly_homework"][week_str][lesson_str]
+                    "week": week,
+                    "homework": data["weekly_homework"][week_str]
                 }
             else:
-                return {"error": f"{week}주차 {lesson_name} 과제가 없습니다."}
-        else:
-            return {
-                "week": week_str,
-                "all_lessons": self.homework_data["weekly_homework"][week_str]
-            }
-    
-    def get_student_progress(self, user_id: str) -> dict:
-        """학생 진도 확인"""
-        if user_id not in self.homework_data["student_progress"]:
-            return {"error": "아직 제출한 과제가 없습니다."}
+                lesson_str = str(lesson)
+                if lesson_str in data["weekly_homework"][week_str]:
+                    return {
+                        "week": week,
+                        "lesson": lesson,
+                        "homework": data["weekly_homework"][week_str][lesson_str]
+                    }
         
-        return self.homework_data["student_progress"][user_id]
-    
+        return None
+
+    def get_student_progress(self, user_id: str) -> dict:
+        """학생 진도 조회"""
+        data = self.get_homework_data()
+        return data["student_progress"].get(user_id, {
+            "name": "Unknown",
+            "submissions": {},
+            "total_submissions": 0
+        })
+
     def get_submission_stats(self) -> dict:
-        """전체 제출 통계 (관리자용)"""
-        total_students = len(self.homework_data["student_progress"])
-        current_week = self.homework_data["current_week"]
-        current_lesson = self.homework_data["current_lesson"]
+        """제출 통계"""
+        data = self.get_homework_data()
+        total_students = len(data["student_progress"])
+        total_submissions = sum(
+            student["total_submissions"] 
+            for student in data["student_progress"].values()
+        )
+        
+        current_week = data["current_week"]
+        current_lesson = data["current_lesson"]
         current_key = f"{current_week}_{current_lesson}"
         
-        submitted_count = 0
-        for user_data in self.homework_data["student_progress"].values():
-            if current_key in user_data["submissions"]:
-                submitted_count += 1
-        
-        submission_rate = (submitted_count / total_students * 100) if total_students > 0 else 0
-        lesson_name = "1번째" if current_lesson == 1 else "2번째"
+        current_submissions = sum(
+            1 for student in data["student_progress"].values()
+            if current_key in student["submissions"]
+        )
         
         return {
             "total_students": total_students,
-            "current_homework": f"{current_week}주차 {lesson_name}",
-            "submitted_count": submitted_count,
-            "submission_rate": round(submission_rate, 1)
+            "total_submissions": total_submissions,
+            "current_week": current_week,
+            "current_lesson": current_lesson,
+            "current_submissions": current_submissions,
+            "submission_rate": (current_submissions / total_students * 100) if total_students > 0 else 0
         }
-    
+
     def get_random_practice_homework(self) -> dict:
-        """랜덤 연습 과제 생성"""
-        practice_topics = [
+        """연습용 랜덤 과제"""
+        import random
+        
+        practice_homeworks = [
             {
-                "title": "태양광 발전량 계산 프롬프트",
-                "description": """🌞 연습: 태양광 전문가 되어보기
+                "title": "AI 활용 아이디어 브레인스토밍",
+                "description": """💡 **창의적 사고 연습**
 
-📝 과제:
-태양광 발전 전문가 역할로 발전량 계산 프롬프트를 작성하세요:
-- 용량: 100kW
-- 지역: 본인 거주 지역
-- 설치조건: 자유 설정
+🎯 목표: AI를 활용한 혁신적 아이디어 발굴
 
-💡 포함사항:
-1. 전문가 역할 설정
-2. 구체적 계산 요청  
-3. 결과 형식 지정
-4. 경제성 분석 요청
+📝 실습:
+1. 본인 업무/관심 분야에서 AI 활용 가능한 영역 3가지 찾기
+2. 각 영역별로 구체적인 AI 솔루션 아이디어 제시
+3. 실현 가능성과 기대 효과 분석
 
-📤 제출: 프롬프트와 AI 응답""",
-                "difficulty": "실전",
+⏰ 예상 시간: 45분""",
+                "difficulty": "중급",
                 "estimated_time": "45분"
+            },
+            {
+                "title": "프롬프트 엔지니어링 마스터",
+                "description": """🚀 **고급 프롬프트 기법 연습**
+
+🎯 목표: 효과적인 프롬프트 작성 능력 향상
+
+📝 실습:
+1. 체인 오브 쏘트(Chain-of-Thought) 프롬프트 작성
+2. 퓨샷 러닝(Few-shot Learning) 예제 설계
+3. 역할 기반 프롬프트 최적화
+
+⏰ 예상 시간: 60분""",
+                "difficulty": "고급",
+                "estimated_time": "60분"
             }
         ]
         
-        return random.choice(practice_topics)
+        return random.choice(practice_homeworks)
+
+# 전역 인스턴스 (구글 드라이브 기반)
+homework_manager = HomeworkManager()

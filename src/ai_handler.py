@@ -9,6 +9,8 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 import json
 from datetime import datetime
+import io
+from src.google_drive_handler import drive_handler
 
 load_dotenv()
 
@@ -17,44 +19,144 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=GEMINI_API_KEY)
 
-# 사용량 추적 파일
-current_dir = os.path.dirname(os.path.abspath(__file__))
-USAGE_FILE = os.path.join(current_dir, "usage_tracker.json")
-
 class AIHandler:
     def __init__(self):
-        self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-        self.usage_data = self.load_usage_data()
+        self.gemini_models = {
+            'gemini-1.5-flash': genai.GenerativeModel('gemini-1.5-flash'),
+            'gemini-2.0-flash-exp': genai.GenerativeModel('gemini-2.0-flash-exp'),
+            'gemini-2.5-flash': genai.GenerativeModel('gemini-2.5-flash')
+        }
+        self.default_model = 'gemini-2.0-flash-exp'
+        self.user_preferences = {}  # 사용자별 모델 선택 저장
         
-    def load_usage_data(self):
-        """사용량 데이터 로드"""
+        # 구글 드라이브 기반 설정
+        self.ai_handler_folder_name = "팜솔라_AI관리_시스템"
+        self.usage_file_name = "usage_tracker.json"
+        self.usage_data = None
+        
+    def ensure_ai_handler_folder(self) -> str:
+        """AI 핸들러 폴더 확인/생성"""
         try:
-            with open(USAGE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return {
+            if not drive_handler.authenticate():
+                raise Exception("구글 드라이브 인증 실패")
+            
+            # 기존 폴더 검색
+            query = f"name='{self.ai_handler_folder_name}' and mimeType='application/vnd.google-apps.folder'"
+            results = drive_handler.service.files().list(q=query, fields='files(id, name)').execute()
+            folders = results.get('files', [])
+            
+            if folders:
+                return folders[0]['id']
+            
+            # 폴더 생성
+            folder_metadata = {
+                'name': self.ai_handler_folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = drive_handler.service.files().create(body=folder_metadata, fields='id').execute()
+            return folder.get('id')
+            
+        except Exception as e:
+            raise Exception(f"AI 핸들러 폴더 생성 실패: {str(e)}")
+        
+    def load_usage_data(self) -> dict:
+        """구글 드라이브에서 사용량 데이터 로드"""
+        if self.usage_data is not None:
+            return self.usage_data
+            
+        try:
+            folder_id = self.ensure_ai_handler_folder()
+            
+            # 데이터 파일 검색
+            query = f"name='{self.usage_file_name}' and parents in '{folder_id}'"
+            results = drive_handler.service.files().list(q=query, fields='files(id, name)').execute()
+            files = results.get('files', [])
+            
+            if files:
+                # 기존 파일 읽기
+                file_id = files[0]['id']
+                content = drive_handler.service.files().get_media(fileId=file_id).execute()
+                self.usage_data = json.loads(content.decode('utf-8'))
+                return self.usage_data
+            else:
+                # 초기 데이터 생성
+                self.usage_data = {
+                    "daily_gemini_calls": 0,
+                    "daily_chatgpt_calls": 0,
+                    "last_reset_date": datetime.now().strftime("%Y-%m-%d"),
+                    "total_gemini_calls": 0,
+                    "total_chatgpt_calls": 0
+                }
+                self.save_usage_data()
+                return self.usage_data
+                
+        except Exception as e:
+            print(f"사용량 데이터 로드 실패: {e}")
+            self.usage_data = {
                 "daily_gemini_calls": 0,
                 "daily_chatgpt_calls": 0,
                 "last_reset_date": datetime.now().strftime("%Y-%m-%d"),
                 "total_gemini_calls": 0,
                 "total_chatgpt_calls": 0
             }
+            return self.usage_data
     
     def save_usage_data(self):
-        """사용량 데이터 저장"""
-        with open(USAGE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(self.usage_data, f, ensure_ascii=False, indent=2)
+        """구글 드라이브에 사용량 데이터 저장"""
+        if self.usage_data is None:
+            return
+            
+        try:
+            folder_id = self.ensure_ai_handler_folder()
+            content = json.dumps(self.usage_data, ensure_ascii=False, indent=2)
+            
+            # 기존 파일 검색
+            query = f"name='{self.usage_file_name}' and parents in '{folder_id}'"
+            results = drive_handler.service.files().list(q=query, fields='files(id, name)').execute()
+            files = results.get('files', [])
+            
+            if files:
+                # 기존 파일 업데이트
+                file_id = files[0]['id']
+                media_body = drive_handler.MediaIoBaseUpload(
+                    io.BytesIO(content.encode('utf-8')),
+                    mimetype='application/json'
+                )
+                drive_handler.service.files().update(
+                    fileId=file_id,
+                    media_body=media_body
+                ).execute()
+            else:
+                # 새 파일 생성
+                file_metadata = {
+                    'name': self.usage_file_name,
+                    'parents': [folder_id]
+                }
+                media_body = drive_handler.MediaIoBaseUpload(
+                    io.BytesIO(content.encode('utf-8')),
+                    mimetype='application/json'
+                )
+                drive_handler.service.files().create(
+                    body=file_metadata,
+                    media_body=media_body,
+                    fields='id'
+                ).execute()
+                
+        except Exception as e:
+            print(f"사용량 데이터 저장 실패: {e}")
     
     def reset_daily_usage_if_needed(self):
         """날짜가 바뀌면 일일 사용량 리셋"""
+        usage_data = self.load_usage_data()
         today = datetime.now().strftime("%Y-%m-%d")
-        if self.usage_data["last_reset_date"] != today:
-            self.usage_data["daily_gemini_calls"] = 0
-            self.usage_data["daily_chatgpt_calls"] = 0
-            self.usage_data["last_reset_date"] = today
+        if usage_data["last_reset_date"] != today:
+            usage_data["daily_gemini_calls"] = 0
+            usage_data["daily_chatgpt_calls"] = 0
+            usage_data["last_reset_date"] = today
+            self.usage_data = usage_data
             self.save_usage_data()
     
-    async def chat_with_ai(self, message: str, user_name: str = "사용자") -> tuple:
+    async def chat_with_ai(self, message: str, user_name: str = "사용자", user_id: str = None) -> tuple:
         """AI와 대화 (Gemini 우선, 실패시 ChatGPT)"""
         self.reset_daily_usage_if_needed()
         
@@ -72,15 +174,53 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
 6. 이모지를 적절히 사용하여 친근한 분위기 조성
 """
         
-        # 1차: Gemini 시도 (일일 한도: 1500회)
-        if self.usage_data["daily_gemini_calls"] < 1400:  # 여유분 100개 남김
+        # 사용자가 선택한 모델 확인
+        selected_model = self.get_user_model(user_id) if user_id else self.default_model
+        
+        # GPT-4o를 선택한 경우 바로 ChatGPT 사용
+        if selected_model == 'gpt-4o':
             try:
-                response = self.gemini_model.generate_content(f"{system_prompt}\n\n사용자 질문: {message}")
-                self.usage_data["daily_gemini_calls"] += 1
-                self.usage_data["total_gemini_calls"] += 1
+                response = openai.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7
+                )
+                
+                usage_data = self.load_usage_data()
+                usage_data["daily_chatgpt_calls"] += 1
+                usage_data["total_chatgpt_calls"] += 1
+                self.usage_data = usage_data
                 self.save_usage_data()
                 
-                return response.text.strip(), "🧠 Padiem"
+                return response.choices[0].message.content.strip(), "🧠 padiem"
+                
+            except Exception as e:
+                print(f"GPT-4o API 오류: {str(e)}")
+                # GPT-4o 실패시 Gemini로 전환
+        
+        # Gemini 모델 사용 (2.0 또는 2.5)
+        usage_data = self.load_usage_data()
+        if usage_data["daily_gemini_calls"] < 1400:  # 일일 한도: 1500회
+            try:
+                # 선택된 Gemini 모델 사용
+                if selected_model == 'gemini-2.5-flash':
+                    model = self.gemini_models['gemini-2.5-flash']
+                    model_name = "🧠 padiem"
+                else:  # 기본값: gemini-2.0-flash-exp
+                    model = self.gemini_models['gemini-2.0-flash-exp']
+                    model_name = "🧠 padiem"
+                
+                response = model.generate_content(f"{system_prompt}\n\n사용자 질문: {message}")
+                usage_data["daily_gemini_calls"] += 1
+                usage_data["total_gemini_calls"] += 1
+                self.usage_data = usage_data
+                self.save_usage_data()
+                
+                return response.text.strip(), model_name
                 
             except Exception as e:
                 print(f"Gemini API 오류: {str(e)}")
@@ -102,7 +242,7 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
             self.usage_data["total_chatgpt_calls"] += 1
             self.save_usage_data()
             
-            return response.choices[0].message.content.strip(), "🤖 ChatGPT"
+            return response.choices[0].message.content.strip(), "🧠 padiem"
             
         except Exception as e:
             return f"""죄송합니다. AI 서비스에 일시적인 문제가 발생했습니다.
@@ -136,13 +276,15 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
 """
         
         try:
-            if self.usage_data["daily_gemini_calls"] < 1400:
-                response = self.gemini_model.generate_content(prompt)
-                self.usage_data["daily_gemini_calls"] += 1
-                self.usage_data["total_gemini_calls"] += 1
+            usage_data = self.load_usage_data()
+            if usage_data["daily_gemini_calls"] < 1400:
+                response = self.gemini_models['gemini-2.0-flash-exp'].generate_content(prompt)
+                usage_data["daily_gemini_calls"] += 1
+                usage_data["total_gemini_calls"] += 1
+                self.usage_data = usage_data
                 self.save_usage_data()
                 
-                return f"🌞 태양광 발전량 분석 결과\n\n{response.text.strip()}", "🧠 Padiem"
+                return f"🌞 태양광 발전량 분석 결과\n\n{response.text.strip()}", "🧠 padiem"
             else:
                 # ChatGPT 백업
                 response = openai.chat.completions.create(
@@ -155,11 +297,12 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
                     temperature=0.3
                 )
                 
-                self.usage_data["daily_chatgpt_calls"] += 1
-                self.usage_data["total_chatgpt_calls"] += 1
+                usage_data["daily_chatgpt_calls"] += 1
+                usage_data["total_chatgpt_calls"] += 1
+                self.usage_data = usage_data
                 self.save_usage_data()
                 
-                return f"🌞 태양광 발전량 분석 결과\n\n{response.choices[0].message.content.strip()}", "🤖 ChatGPT"
+                return f"🌞 태양광 발전량 분석 결과\n\n{response.choices[0].message.content.strip()}", "🧠 padiem"
                 
         except Exception as e:
             return f"""태양광 계산 중 오류가 발생했습니다: {str(e)}
@@ -189,13 +332,15 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
 """
         
         try:
-            if self.usage_data["daily_gemini_calls"] < 1400:
-                response = self.gemini_model.generate_content(prompt)
-                self.usage_data["daily_gemini_calls"] += 1
-                self.usage_data["total_gemini_calls"] += 1
+            usage_data = self.load_usage_data()
+            if usage_data["daily_gemini_calls"] < 1400:
+                response = self.gemini_models['gemini-2.0-flash-exp'].generate_content(prompt)
+                usage_data["daily_gemini_calls"] += 1
+                usage_data["total_gemini_calls"] += 1
+                self.usage_data = usage_data
                 self.save_usage_data()
                 
-                return f"📝 '{topic}' 프롬프트 템플릿\n\n{response.text.strip()}", "🧠 Padiem"
+                return f"📝 '{topic}' 프롬프트 템플릿\n\n{response.text.strip()}", "🧠 padiem"
             else:
                 # ChatGPT 백업
                 response = openai.chat.completions.create(
@@ -208,11 +353,12 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
                     temperature=0.5
                 )
                 
-                self.usage_data["daily_chatgpt_calls"] += 1
-                self.usage_data["total_chatgpt_calls"] += 1
+                usage_data["daily_chatgpt_calls"] += 1
+                usage_data["total_chatgpt_calls"] += 1
+                self.usage_data = usage_data
                 self.save_usage_data()
                 
-                return f"📝 '{topic}' 프롬프트 템플릿\n\n{response.choices[0].message.content.strip()}", "🤖 ChatGPT"
+                return f"📝 '{topic}' 프롬프트 템플릿\n\n{response.choices[0].message.content.strip()}", "🧠 padiem"
                 
         except Exception as e:
             return f"""프롬프트 템플릿 생성 중 오류가 발생했습니다: {str(e)}
@@ -255,15 +401,17 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
 """
         
         # 1차: Gemini 시도
-        if self.usage_data["daily_gemini_calls"] < 1400:
+        usage_data = self.load_usage_data()
+        if usage_data["daily_gemini_calls"] < 1400:
             try:
                 prompt = f"{system_prompt}\n\n분석할 과제 내용:\n{homework_content}"
-                response = self.gemini_model.generate_content(prompt)
-                self.usage_data["daily_gemini_calls"] += 1
-                self.usage_data["total_gemini_calls"] += 1
+                response = self.gemini_models['gemini-2.0-flash-exp'].generate_content(prompt)
+                usage_data["daily_gemini_calls"] += 1
+                usage_data["total_gemini_calls"] += 1
+                self.usage_data = usage_data
                 self.save_usage_data()
                 
-                return response.text.strip(), "🧠 Padiem"
+                return response.text.strip(), "🧠 padiem"
                 
             except Exception as e:
                 print(f"Gemini API 오류: {str(e)}")
@@ -280,11 +428,13 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
                 temperature=0.7
             )
             
-            self.usage_data["daily_chatgpt_calls"] += 1
-            self.usage_data["total_chatgpt_calls"] += 1
+            usage_data = self.load_usage_data()
+            usage_data["daily_chatgpt_calls"] += 1
+            usage_data["total_chatgpt_calls"] += 1
+            self.usage_data = usage_data
             self.save_usage_data()
             
-            return response.choices[0].message.content.strip(), "🤖 ChatGPT"
+            return response.choices[0].message.content.strip(), "🧠 padiem"
             
         except Exception as e:
             return f"""과제 설명 생성 중 오류가 발생했습니다: {str(e)}
@@ -301,13 +451,34 @@ ChatGPT 실무 강의와 팜솔라(태양광) 업무를 도와주는 전문 AI �
     def get_usage_stats(self) -> dict:
         """사용량 통계 반환"""
         self.reset_daily_usage_if_needed()
+        usage_data = self.load_usage_data()
         return {
-            "daily_gemini": self.usage_data["daily_gemini_calls"],
-            "daily_chatgpt": self.usage_data["daily_chatgpt_calls"],
-            "total_gemini": self.usage_data["total_gemini_calls"],
-            "total_chatgpt": self.usage_data["total_chatgpt_calls"],
-            "gemini_remaining": max(0, 1400 - self.usage_data["daily_gemini_calls"]),
-            "date": self.usage_data["last_reset_date"]
+            "daily_gemini": usage_data["daily_gemini_calls"],
+            "daily_chatgpt": usage_data["daily_chatgpt_calls"],
+            "total_gemini": usage_data["total_gemini_calls"],
+            "total_chatgpt": usage_data["total_chatgpt_calls"],
+            "gemini_remaining": max(0, 1400 - usage_data["daily_gemini_calls"]),
+            "date": usage_data["last_reset_date"]
+        }
+    
+    def set_user_model(self, user_id, model_name):
+        """사용자별 AI 모델 설정"""
+        available_models = ['gemini-2.0-flash-exp', 'gemini-2.5-flash', 'gpt-4o']
+        if model_name in available_models:
+            self.user_preferences[str(user_id)] = model_name
+            return True
+        return False
+    
+    def get_user_model(self, user_id):
+        """사용자의 선택된 AI 모델 반환"""
+        return self.user_preferences.get(str(user_id), self.default_model)
+    
+    def get_available_models(self):
+        """사용 가능한 AI 모델 목록 반환"""
+        return {
+            'gemini-2.0-flash-exp': '🧠 padiem (빠르고 균형잡힌 성능)',
+            'gemini-2.5-flash': '🧠 padiem (최고 정확도, 생각 모드)',
+            'gpt-4o': '🧠 padiem (OpenAI 최신 모델)'
         }
 
 def test_api_connection() -> dict:

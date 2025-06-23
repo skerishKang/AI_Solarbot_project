@@ -1,108 +1,127 @@
 """
-AI_Solarbot 관리자 전용 명령어
-- 시스템 모니터링
-- 사용자 관리
-- 봇 설정 변경
-- 데이터 백업/복원
-- 성능 최적화
+관리자 전용 명령어 모음 (완전 메모리 기반)
+구글 드라이브 전용 - 로컬 파일 접근 없음
 """
 
-import os
 import json
-import psutil
-import asyncio
 from datetime import datetime, timedelta
+from typing import List
 from telegram import Update
 from telegram.ext import ContextTypes
-from pathlib import Path
-from monitoring import bot_monitor
-from ai_handler import ai_handler
+from functools import wraps
+from src.monitoring import bot_monitor
 
-# 관리자 ID 확인
-ADMIN_USER_ID = os.getenv('ADMIN_USER_ID', '')
+# 관리자 ID 목록 (환경변수나 설정 파일에서 로드하는 것이 좋음)
+ADMIN_IDS = [
+    123456789,  # 실제 관리자 텔레그램 ID로 변경
+    987654321   # 추가 관리자 ID
+]
 
 def admin_required(func):
     """관리자 권한 확인 데코레이터"""
+    @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = str(update.effective_user.id)
-        if ADMIN_USER_ID and user_id != ADMIN_USER_ID:
-            await update.message.reply_text("⚠️ 관리자만 사용할 수 있는 명령어입니다.")
+        user_id = update.effective_user.id
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ 관리자 권한이 필요합니다.")
             return
-        
         return await func(update, context)
-    
     return wrapper
 
 @admin_required
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """관리자 대시보드"""
-    # 시스템 리소스 정보
-    memory = psutil.virtual_memory()
-    cpu_percent = psutil.cpu_percent(interval=1)
-    disk = psutil.disk_usage('/')
-    
-    # 봇 성능 메트릭
-    performance = bot_monitor.get_performance_metrics()
-    
-    # AI 사용량
-    usage_stats = ai_handler.get_usage_stats()
-    
-    dashboard = f"""🔧 **관리자 대시보드**
+    try:
+        # monitoring.py의 메모리 데이터 사용
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        total = bot_monitor.daily_stats.get(f"{today}_total", 0)
+        success = bot_monitor.daily_stats.get(f"{today}_success", 0)
+        errors = bot_monitor.daily_stats.get(f"{today}_errors", 0)
+        
+        success_rate = (success / total * 100) if total > 0 else 0
+        
+        # 활성 사용자 수
+        active_users = len([
+            user for user, data in bot_monitor.user_stats.items()
+            if data["last_active"] and 
+            datetime.fromisoformat(data["last_active"]).date() == datetime.now().date()
+        ])
+        
+        # 인기 명령어 Top 5
+        top_commands = sorted(
+            bot_monitor.command_stats.items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )[:5]
+        
+        # 최근 에러
+        recent_errors = list(bot_monitor.errors)[-5:] if bot_monitor.errors else []
+        
+        dashboard = f"""🔧 **관리자 대시보드**
 
-💻 **시스템 리소스:**
-• CPU: {cpu_percent}%
-• 메모리: {memory.percent}% ({memory.used//1024//1024}MB / {memory.total//1024//1024}MB)
-• 디스크: {disk.percent}% ({disk.used//1024//1024//1024}GB / {disk.total//1024//1024//1024}GB)
+📊 **오늘 ({today}) 통계:**
+• 총 요청: {total}회
+• 성공: {success}회  
+• 에러: {errors}회
+• 성공률: {success_rate:.1f}%
 
-🤖 **봇 성능:**"""
-    
-    if "error" not in performance:
-        dashboard += f"""
-• 24시간 요청: {performance['total_requests_24h']}회
-• 평균 응답시간: {performance['avg_response_time']}초
-• 성공률: {performance['success_rate']:.1f}%
-• AI 모델 분포: {performance['model_distribution']}"""
-    else:
-        dashboard += f"\n• {performance['error']}"
-    
-    dashboard += f"""
+👥 **사용자:**
+• 오늘 활성: {active_users}명
+• 총 등록: {len(bot_monitor.user_stats)}명
 
-🧠 **AI 사용량:**
-• Gemini: {usage_stats['daily_gemini']}/1400회
-• ChatGPT: {usage_stats['daily_chatgpt']}회
-• 총 누적: Gemini {usage_stats['total_gemini']}회, ChatGPT {usage_stats['total_chatgpt']}회
-
-⚙️ **관리 명령어:**
-/admin_report - 일일 리포트
-/admin_users - 사용자 관리
-/admin_backup - 데이터 백업
-/admin_cleanup - 로그 정리
-/admin_broadcast - 전체 공지
-/admin_restart - 봇 재시작 (주의!)"""
-    
-    await update.message.reply_text(dashboard)
+🔥 **인기 명령어:**"""
+        
+        for i, (cmd, count) in enumerate(top_commands, 1):
+            dashboard += f"\n{i}. /{cmd}: {count}회"
+        
+        if recent_errors:
+            dashboard += f"\n\n⚠️ **최근 에러 ({len(recent_errors)}개):**"
+            for error in recent_errors[-3:]:
+                error_time = datetime.fromisoformat(error['timestamp']).strftime('%H:%M')
+                dashboard += f"\n• {error_time} - {error['error_type']}"
+        
+        await update.message.reply_text(dashboard)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ 대시보드 로드 실패: {e}")
 
 @admin_required
 async def admin_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """일일 리포트"""
-    report = bot_monitor.get_daily_report()
-    await update.message.reply_text(report)
+    """상세 리포트 생성"""
+    try:
+        # monitoring.py의 일일 리포트 사용
+        daily_report = bot_monitor.get_daily_report()
+        
+        # 성능 메트릭 추가
+        performance = bot_monitor.get_performance_metrics()
+        
+        if "error" not in performance:
+            report = daily_report + f"""
+
+⚡ **성능 메트릭 (24시간):**
+• 평균 응답시간: {performance['avg_response_time']}초
+• 총 요청: {performance['total_requests_24h']}회
+• 성공률: {performance['success_rate']:.1f}%
+
+🤖 **AI 모델 사용:**"""
+            
+            for model, count in performance['model_distribution'].items():
+                report += f"\n• {model}: {count}회"
+        else:
+            report = daily_report
+        
+        await update.message.reply_text(report)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ 리포트 생성 실패: {e}")
 
 @admin_required
 async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """사용자 관리"""
     try:
-        data_dir = Path("../data")
-        metrics_file = data_dir / "bot_metrics.json"
-        
-        if not metrics_file.exists():
-            await update.message.reply_text("❌ 사용자 데이터가 없습니다.")
-            return
-        
-        with open(metrics_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        user_stats = data.get('user_stats', {})
+        # monitoring.py의 메모리 데이터 사용
+        user_stats = bot_monitor.user_stats
         
         if not user_stats:
             await update.message.reply_text("❌ 등록된 사용자가 없습니다.")
@@ -149,155 +168,86 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_required
 async def admin_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """데이터 백업"""
+    """메모리 데이터 상태 확인"""
     try:
-        await update.message.reply_text("🔄 데이터 백업 중...")
+        await update.message.reply_text("📊 메모리 데이터 상태 확인 중...")
         
-        # 백업 폴더 생성
-        backup_dir = Path("../backups")
-        backup_dir.mkdir(exist_ok=True)
+        # 메모리 사용량 정보
+        activities_count = len(bot_monitor.activities)
+        errors_count = len(bot_monitor.errors)
+        users_count = len(bot_monitor.user_stats)
+        commands_count = len(bot_monitor.command_stats)
         
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_folder = backup_dir / f"backup_{timestamp}"
-        backup_folder.mkdir()
+        status_report = f"""💾 **메모리 데이터 상태**
+
+📈 **저장된 데이터:**
+• 사용자 활동: {activities_count}개
+• 에러 로그: {errors_count}개  
+• 등록 사용자: {users_count}명
+• 명령어 통계: {commands_count}개
+
+ℹ️ **메모리 기반 시스템:**
+• 활동 로그: 최대 1,000개 유지
+• 에러 로그: 최대 500개 유지
+• 재시작 시 데이터 초기화됨
+
+⚠️ **중요:** 영구 저장이 필요한 데이터는 
+구글 드라이브 시스템을 사용하세요."""
         
-        # 백업할 파일들
-        data_dir = Path("../data")
-        files_to_backup = [
-            "user_activity.json",
-            "bot_metrics.json", 
-            "error_log.json",
-            "bot_monitor.log"
-        ]
-        
-        src_files = [
-            "../src/homework_data.json"
-        ]
-        
-        backup_count = 0
-        
-        # data 폴더 백업
-        for filename in files_to_backup:
-            src_file = data_dir / filename
-            if src_file.exists():
-                dst_file = backup_folder / filename
-                dst_file.write_bytes(src_file.read_bytes())
-                backup_count += 1
-        
-        # src 폴더 백업
-        for src_path in src_files:
-            src_file = Path(src_path)
-            if src_file.exists():
-                dst_file = backup_folder / src_file.name
-                dst_file.write_bytes(src_file.read_bytes())
-                backup_count += 1
-        
-        # 백업 정보 파일
-        backup_info = {
-            "timestamp": timestamp,
-            "files_backed_up": backup_count,
-            "backup_size_mb": sum(f.stat().st_size for f in backup_folder.iterdir()) / 1024 / 1024
-        }
-        
-        info_file = backup_folder / "backup_info.json"
-        with open(info_file, 'w', encoding='utf-8') as f:
-            json.dump(backup_info, f, ensure_ascii=False, indent=2)
-        
-        # 오래된 백업 정리 (10개 이상시)
-        backup_folders = sorted([d for d in backup_dir.iterdir() if d.is_dir()])
-        if len(backup_folders) > 10:
-            for old_backup in backup_folders[:-10]:
-                import shutil
-                shutil.rmtree(old_backup)
-        
-        await update.message.reply_text(
-            f"✅ 백업 완료!\n\n"
-            f"📁 폴더: {backup_folder.name}\n"
-            f"📄 파일: {backup_count}개\n"
-            f"💾 크기: {backup_info['backup_size_mb']:.2f}MB"
-        )
+        await update.message.reply_text(status_report)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ 백업 실패: {e}")
+        await update.message.reply_text(f"❌ 상태 확인 실패: {e}")
 
 @admin_required
 async def admin_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """로그 및 데이터 정리"""
+    """메모리 데이터 정리"""
     try:
-        await update.message.reply_text("🧹 데이터 정리 중...")
+        await update.message.reply_text("🧹 메모리 데이터 정리 중...")
         
-        cleaned_files = []
-        total_saved_mb = 0
+        # 현재 상태 저장
+        before_activities = len(bot_monitor.activities)
+        before_errors = len(bot_monitor.errors)
         
-        # 로그 파일 정리 (30일 이상 된 것)
-        data_dir = Path("../data")
-        log_file = data_dir / "bot_monitor.log"
+        # 30일 이전 활동 데이터 정리
+        cutoff_date = datetime.now() - timedelta(days=30)
+        filtered_activities = [
+            activity for activity in bot_monitor.activities
+            if activity.timestamp > cutoff_date
+        ]
         
-        if log_file.exists():
-            original_size = log_file.stat().st_size
-            
-            # 로그 파일 크기가 10MB 이상이면 정리
-            if original_size > 10 * 1024 * 1024:
-                # 최근 1000줄만 유지
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                
-                if len(lines) > 1000:
-                    with open(log_file, 'w', encoding='utf-8') as f:
-                        f.writelines(lines[-1000:])
-                    
-                    new_size = log_file.stat().st_size
-                    saved_mb = (original_size - new_size) / 1024 / 1024
-                    total_saved_mb += saved_mb
-                    cleaned_files.append(f"bot_monitor.log ({saved_mb:.1f}MB 절약)")
+        # 메모리 데이터 업데이트
+        bot_monitor.activities.clear()
+        bot_monitor.activities.extend(filtered_activities)
         
-        # 오래된 활동 데이터 정리
-        activity_file = data_dir / "user_activity.json"
-        if activity_file.exists():
-            with open(activity_file, 'r', encoding='utf-8') as f:
-                activities = json.load(f)
-            
-            original_count = len(activities)
-            
-            # 30일 이전 데이터 삭제
-            cutoff_date = datetime.now() - timedelta(days=30)
-            recent_activities = [
-                act for act in activities
-                if datetime.fromisoformat(act['timestamp']) > cutoff_date
-            ]
-            
-            if len(recent_activities) < original_count:
-                with open(activity_file, 'w', encoding='utf-8') as f:
-                    json.dump(recent_activities, f, ensure_ascii=False, indent=2)
-                
-                cleaned_files.append(f"user_activity.json ({original_count - len(recent_activities)}개 항목 정리)")
+        # 오래된 일일 통계 정리 (30일 이전)
+        old_stats_keys = [
+            key for key in bot_monitor.daily_stats.keys()
+            if '_' in key and len(key.split('_')[0]) == 10  # YYYY-MM-DD 형식
+        ]
         
-        # 에러 로그 정리
-        error_file = data_dir / "error_log.json"
-        if error_file.exists():
-            with open(error_file, 'r', encoding='utf-8') as f:
-                errors = json.load(f)
-            
-            original_count = len(errors)
-            
-            # 최근 100개만 유지
-            if original_count > 100:
-                with open(error_file, 'w', encoding='utf-8') as f:
-                    json.dump(errors[-100:], f, ensure_ascii=False, indent=2)
-                
-                cleaned_files.append(f"error_log.json ({original_count - 100}개 에러 정리)")
+        removed_stats = 0
+        for key in old_stats_keys:
+            try:
+                date_str = key.split('_')[0]
+                stat_date = datetime.strptime(date_str, '%Y-%m-%d')
+                if stat_date < cutoff_date:
+                    del bot_monitor.daily_stats[key]
+                    removed_stats += 1
+            except:
+                continue
         
-        result = "🧹 **데이터 정리 완료**\n\n"
+        after_activities = len(bot_monitor.activities)
+        after_errors = len(bot_monitor.errors)
         
-        if cleaned_files:
-            result += "📄 **정리된 파일들:**\n"
-            for file_info in cleaned_files:
-                result += f"• {file_info}\n"
-            
-            if total_saved_mb > 0:
-                result += f"\n💾 **총 절약 용량:** {total_saved_mb:.1f}MB"
-        else:
-            result += "✨ 정리할 데이터가 없습니다. 시스템이 깨끗합니다!"
+        result = f"""🧹 **메모리 정리 완료**
+
+📊 **정리 결과:**
+• 활동 로그: {before_activities} → {after_activities}개
+• 에러 로그: {before_errors} → {after_errors}개
+• 오래된 통계: {removed_stats}개 제거
+
+✅ 30일 이전 데이터가 정리되었습니다."""
         
         await update.message.reply_text(result)
         
