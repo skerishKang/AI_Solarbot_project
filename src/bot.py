@@ -3785,12 +3785,364 @@ async def tech_auto_update_command(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         await update.message.reply_text(f"❌ 자동 업데이트 설정 실패: {str(e)}")
 
-def main() -> None:
-    """메인 함수"""
-    if not BOT_TOKEN:
-        print("ERROR: 봇 토큰이 설정되지 않았습니다!")
+# =================== 품질 평가 전용 텔레그램 명령어들 (5단계 5차 업그레이드) ===================
+
+def get_quality_grade(score: float) -> str:
+    """품질 점수를 등급으로 변환"""
+    if score >= 95:
+        return "A+"
+    elif score >= 90:
+        return "A"
+    elif score >= 85:
+        return "A-"
+    elif score >= 80:
+        return "B+"
+    elif score >= 75:
+        return "B"
+    elif score >= 70:
+        return "B-"
+    elif score >= 65:
+        return "C+"
+    elif score >= 60:
+        return "C"
+    elif score >= 55:
+        return "C-"
+    elif score >= 50:
+        return "D+"
+    elif score >= 45:
+        return "D"
+    elif score >= 40:
+        return "D-"
+    else:
+        return "F"
+
+def get_grade_emoji(grade: str) -> str:
+    """등급에 해당하는 이모지 반환"""
+    grade_emojis = {
+        "A+": "🌟", "A": "⭐", "A-": "✨",
+        "B+": "🔥", "B": "👍", "B-": "👌",
+        "C+": "😊", "C": "😐", "C-": "😕",
+        "D+": "😟", "D": "😞", "D-": "😢",
+        "F": "💥"
+    }
+    return grade_emojis.get(grade, "📊")
+
+async def quality_only_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """콘텐츠의 기본 품질 평가만 수행"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ 사용법: /quality_only <URL>\n"
+            "예시: /quality_only https://example.com\n\n"
+            "📋 이 명령어는 콘텐츠의 기본 품질 평가만 수행합니다."
+        )
         return
     
+    url = context.args[0]
+    
+    try:
+        progress_msg = await update.message.reply_text("🔄 콘텐츠 품질 평가를 시작합니다...")
+        
+        # 콘텐츠 가져오기
+        content = await fetch_content_with_fallback(url)
+        
+        if content:
+            await progress_msg.edit_text("📊 품질 분석 중...")
+            
+            # 품질 분석 수행
+            analyzer = IntelligentContentAnalyzer()
+            result = await analyzer.analyze_content(content, content_type='웹페이지')
+            
+            if result and hasattr(result, 'quality_score'):
+                message = "📊 **콘텐츠 품질 평가 결과**\n\n"
+                
+                # URL 정보
+                message += f"🔗 **분석 URL:** {url}\n\n"
+                
+                # 전체 품질 점수
+                quality_grade = get_quality_grade(result.quality_score)
+                grade_emoji = get_grade_emoji(quality_grade)
+                message += f"🏆 **전체 품질 점수:** {result.quality_score:.1f}/100\n"
+                message += f"📈 **품질 등급:** {grade_emoji} **{quality_grade}**\n\n"
+                
+                # 품질 차원별 점수 (상위 5개)
+                if hasattr(result, 'quality_dimensions'):
+                    message += f"📋 **품질 차원별 평가:**\n"
+                    
+                    dimension_emojis = {
+                        'credibility': '🔒', 'usefulness': '💡', 'accuracy': '🎯',
+                        'completeness': '📝', 'readability': '📖', 'originality': '✨'
+                    }
+                    
+                    dimension_names = {
+                        'credibility': '신뢰도', 'usefulness': '유용성', 'accuracy': '정확성',
+                        'completeness': '완성도', 'readability': '가독성', 'originality': '독창성'
+                    }
+                    
+                    sorted_dimensions = sorted(result.quality_dimensions.items(), 
+                                             key=lambda x: x[1], reverse=True)[:5]
+                    
+                    for dimension, score in sorted_dimensions:
+                        emoji = dimension_emojis.get(dimension, '📊')
+                        name = dimension_names.get(dimension, dimension.title())
+                        message += f"{emoji} **{name}:** {score:.1f}/100\n"
+                    
+                    message += "\n"
+                
+                # 언어 품질 평가
+                if hasattr(result, 'language_quality'):
+                    lang_quality = result.language_quality
+                    message += f"📚 **언어 품질:**\n"
+                    message += f"✏️ **문법/맞춤법:** {lang_quality.get('grammar_score', 0):.1f}/100\n"
+                    message += f"📖 **어휘 다양성:** {lang_quality.get('vocabulary_diversity', 0):.1f}/100\n"
+                    message += f"📝 **문장 다양성:** {lang_quality.get('sentence_variety', 0):.1f}/100\n\n"
+                
+                # 품질 요약
+                if hasattr(result, 'quality_summary'):
+                    message += f"💭 **품질 요약:**\n{result.quality_summary}\n\n"
+                
+                message += f"🕐 **분석 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                
+                await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+            else:
+                await progress_msg.edit_text("❌ 품질 분석에 실패했습니다.")
+        else:
+            await progress_msg.edit_text("❌ 품질 분석 실패: 콘텐츠를 가져올 수 없습니다.")
+            
+    except Exception as e:
+        logger.error(f"품질 평가 오류: {e}")
+        await update.message.reply_text(f"❌ 품질 평가 중 오류 발생: {str(e)}")
+
+async def quality_detail_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """콘텐츠의 상세 품질 평가 및 개선 제안"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ 사용법: /quality_detail <URL>\n"
+            "예시: /quality_detail https://example.com\n\n"
+            "📋 이 명령어는 상세한 품질 평가와 개선 제안을 제공합니다."
+        )
+        return
+    
+    url = context.args[0]
+    
+    try:
+        progress_msg = await update.message.reply_text("🔄 상세 품질 분석을 시작합니다...")
+        
+        # 콘텐츠 가져오기
+        content = await fetch_content_with_fallback(url)
+        
+        if content:
+            await progress_msg.edit_text("🔍 심층 품질 분석 중...")
+            
+            # 품질 분석 수행
+            analyzer = IntelligentContentAnalyzer()
+            result = await analyzer.analyze_content(content, content_type='웹페이지')
+            
+            if result and hasattr(result, 'quality_score'):
+                message = "🔍 **상세 품질 평가 결과**\n\n"
+                
+                # URL 정보
+                message += f"🔗 **분석 URL:** {url}\n\n"
+                
+                # 전체 품질 점수와 등급
+                quality_grade = get_quality_grade(result.quality_score)
+                grade_emoji = get_grade_emoji(quality_grade)
+                message += f"🏆 **전체 품질 점수:** {result.quality_score:.1f}/100\n"
+                message += f"📈 **품질 등급:** {grade_emoji} **{quality_grade}**\n\n"
+                
+                # 모든 품질 차원 상세 분석
+                if hasattr(result, 'quality_dimensions'):
+                    message += f"📊 **품질 차원별 상세 분석:**\n"
+                    
+                    dimension_emojis = {
+                        'credibility': '🔒', 'usefulness': '💡', 'accuracy': '🎯',
+                        'completeness': '📝', 'readability': '📖', 'originality': '✨'
+                    }
+                    
+                    dimension_names = {
+                        'credibility': '신뢰도', 'usefulness': '유용성', 'accuracy': '정확성',
+                        'completeness': '완성도', 'readability': '가독성', 'originality': '독창성'
+                    }
+                    
+                    for dimension, score in result.quality_dimensions.items():
+                        emoji = dimension_emojis.get(dimension, '📊')
+                        name = dimension_names.get(dimension, dimension.title())
+                        grade = get_quality_grade(score)
+                        grade_emoji = get_grade_emoji(grade)
+                        message += f"{emoji} **{name}:** {score:.1f}/100 {grade_emoji}\n"
+                    
+                    message += "\n"
+                
+                # 개선 제안사항
+                if hasattr(result, 'improvement_suggestions'):
+                    suggestions = result.improvement_suggestions
+                    if suggestions:
+                        message += f"💡 **개선 제안사항:**\n"
+                        for i, suggestion in enumerate(suggestions[:5], 1):
+                            message += f"{i}. {suggestion}\n"
+                        message += "\n"
+                
+                # 품질 요약
+                if hasattr(result, 'quality_summary'):
+                    message += f"💭 **품질 요약:**\n{result.quality_summary}\n\n"
+                
+                message += f"🕐 **분석 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                
+                await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+            else:
+                await progress_msg.edit_text("❌ 상세 품질 분석에 실패했습니다.")
+        else:
+            await progress_msg.edit_text("❌ 상세 품질 분석 실패: 콘텐츠를 가져올 수 없습니다.")
+            
+    except Exception as e:
+        logger.error(f"상세 품질 평가 오류: {e}")
+        await update.message.reply_text(f"❌ 상세 품질 평가 중 오류 발생: {str(e)}")
+
+async def quality_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """여러 콘텐츠의 품질을 일괄 평가"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ 사용법: /quality_batch <URL1,URL2,URL3>\n"
+            "예시: /quality_batch https://site1.com,https://site2.com,https://site3.com\n\n"
+            "📋 최대 5개 URL까지 일괄 품질 평가가 가능합니다."
+        )
+        return
+    
+    # URL 목록 파싱
+    urls_str = ' '.join(context.args)
+    urls = [url.strip() for url in urls_str.split(',') if url.strip()]
+    
+    if len(urls) > 5:
+        await update.message.reply_text("❌ 최대 5개 URL까지만 일괄 평가가 가능합니다.")
+        return
+    
+    try:
+        progress_msg = await update.message.reply_text(f"🔄 {len(urls)}개 콘텐츠의 일괄 품질 평가를 시작합니다...")
+        
+        analyzer = IntelligentContentAnalyzer()
+        results = []
+        
+        # 각 URL 분석
+        for i, url in enumerate(urls, 1):
+            await progress_msg.edit_text(f"🔄 {i}/{len(urls)} 콘텐츠 분석 중... ({url[:30]}...)")
+            
+            content = await fetch_content_with_fallback(url)
+            if content:
+                result = await analyzer.analyze_content(content, content_type='웹페이지')
+                if result:
+                    results.append((url, result))
+                else:
+                    results.append((url, None))
+            else:
+                results.append((url, None))
+        
+        # 결과 정리
+        await progress_msg.edit_text("📊 품질 평가 결과를 정리하는 중...")
+        
+        message = f"📊 **일괄 품질 평가 결과** ({len(results)}개)\n\n"
+        
+        successful_results = [r for r in results if r[1] is not None]
+        failed_count = len(results) - len(successful_results)
+        
+        # 성공한 분석 결과들
+        if successful_results:
+            # 품질 점수 순으로 정렬
+            successful_results.sort(key=lambda x: x[1].quality_score if hasattr(x[1], 'quality_score') else 0, reverse=True)
+            
+            message += f"✅ **성공적으로 분석된 콘텐츠:** {len(successful_results)}개\n"
+            if failed_count > 0:
+                message += f"❌ **분석 실패:** {failed_count}개\n"
+            message += "\n"
+            
+            # 순위별 결과 표시
+            for rank, (url, result) in enumerate(successful_results, 1):
+                if hasattr(result, 'quality_score'):
+                    quality_grade = get_quality_grade(result.quality_score)
+                    grade_emoji = get_grade_emoji(quality_grade)
+                    
+                    message += f"🏆 **{rank}위:** {grade_emoji} {result.quality_score:.1f}점\n"
+                    message += f"🔗 {url[:50]}{'...' if len(url) > 50 else ''}\n\n"
+            
+            # 전체 통계
+            avg_score = sum(r[1].quality_score for r in successful_results if hasattr(r[1], 'quality_score')) / len(successful_results)
+            max_score = max(r[1].quality_score for r in successful_results if hasattr(r[1], 'quality_score'))
+            min_score = min(r[1].quality_score for r in successful_results if hasattr(r[1], 'quality_score'))
+            
+            message += f"📊 **전체 통계:**\n"
+            message += f"📈 **평균 점수:** {avg_score:.1f}점\n"
+            message += f"🔝 **최고 점수:** {max_score:.1f}점\n"
+            message += f"🔻 **최저 점수:** {min_score:.1f}점\n"
+        else:
+            message += "❌ 모든 콘텐츠 분석에 실패했습니다.\n"
+        
+        message += f"\n🕐 **분석 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"일괄 품질 평가 오류: {e}")
+        await update.message.reply_text(f"❌ 일괄 품질 평가 중 오류 발생: {str(e)}")
+
+async def quality_compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """두 콘텐츠의 품질 비교 분석"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ 사용법: /quality_compare <URL1> <URL2>\n"
+            "예시: /quality_compare https://example1.com https://example2.com\n\n"
+            "📋 두 콘텐츠의 품질을 비교 분석합니다."
+        )
+        return
+    
+    url1 = context.args[0]
+    url2 = context.args[1]
+    
+    try:
+        progress_msg = await update.message.reply_text("🔄 두 콘텐츠의 품질 비교 분석을 시작합니다...")
+        
+        # 콘텐츠 가져오기
+        content1 = await fetch_content_with_fallback(url1)
+        content2 = await fetch_content_with_fallback(url2)
+        
+        if content1 and content2:
+            await progress_msg.edit_text("📊 품질 비교 분석 중...")
+            
+            # 품질 분석 수행
+            analyzer = IntelligentContentAnalyzer()
+            result1 = await analyzer.analyze_content(content1, content_type='웹페이지')
+            result2 = await analyzer.analyze_content(content2, content_type='웹페이지')
+            
+            if result1 and result2:
+                message = "🔍 **품질 비교 분석 결과**\n\n"
+                
+                # URL 정보
+                message += f"1️⃣ **첫 번째 콘텐츠:** {url1[:50]}...\n"
+                message += f"2️⃣ **두 번째 콘텐츠:** {url2[:50]}...\n\n"
+                
+                # 전체 품질 점수 비교
+                if hasattr(result1, 'quality_score') and hasattr(result2, 'quality_score'):
+                    grade1 = get_quality_grade(result1.quality_score)
+                    grade2 = get_quality_grade(result2.quality_score)
+                    emoji1 = get_grade_emoji(grade1)
+                    emoji2 = get_grade_emoji(grade2)
+                    
+                    message += f"🏆 **전체 품질 점수:**\n"
+                    message += f"1️⃣ {result1.quality_score:.1f}/100 {emoji1} ({grade1})\n"
+                    message += f"2️⃣ {result2.quality_score:.1f}/100 {emoji2} ({grade2})\n"
+                    
+                    score_diff = result1.quality_score - result2.quality_score
+                    if abs(score_diff) > 5:
+                        winner = "첫 번째" if score_diff > 0 else "두 번째"
     print(f"Starting {BOT_USERNAME} bot with Gemini + ChatGPT...")
     
     # 애플리케이션 생성
@@ -3915,6 +4267,18 @@ def main() -> None:
     application.add_handler(CommandHandler("stackoverflow", track_command(stackoverflow_command)))
     application.add_handler(CommandHandler("package_info", track_command(package_info_command)))
     application.add_handler(CommandHandler("tech_auto_update", track_command(tech_auto_update_command)))
+    
+    # 감정 분석 전용 명령어 (5단계 4차)
+    application.add_handler(CommandHandler("sentiment_only", track_command(sentiment_only_command)))
+    application.add_handler(CommandHandler("emotion_detail", track_command(emotion_detail_command)))
+    application.add_handler(CommandHandler("sentiment_batch", track_command(sentiment_batch_command)))
+    application.add_handler(CommandHandler("sentiment_compare", track_command(sentiment_compare_command)))
+    
+    # 품질 평가 전용 명령어 (5단계 5차)
+    application.add_handler(CommandHandler("quality_only", track_command(quality_only_command)))
+    application.add_handler(CommandHandler("quality_detail", track_command(quality_detail_command)))
+    application.add_handler(CommandHandler("quality_batch", track_command(quality_batch_command)))
+    application.add_handler(CommandHandler("quality_compare", track_command(quality_compare_command)))
     
     # 협업 및 공유 기능 명령어 (7단계)
     application.add_handler(CommandHandler("team", track_command(team_command)))
