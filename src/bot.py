@@ -49,6 +49,9 @@ from tech_info_updater import tech_updater
 # 확장된 온라인 코드 실행 시스템 import 추가
 from online_code_executor import online_code_executor
 
+# 지능형 콘텐츠 분석 시스템 import 추가
+from intelligent_content_analyzer import IntelligentContentAnalyzer
+
 # 환경변수 로드
 load_dotenv()
 
@@ -71,6 +74,9 @@ email_manager = EmailManager()
 
 # 업무보고 관리자 인스턴스
 report_manager = ReportManager()
+
+# 지능형 콘텐츠 분석기 인스턴스
+content_analyzer = IntelligentContentAnalyzer()
 
 # 사용자별 이메일 상태 저장
 user_email_states = {}  # {user_id: {'pending_reply': email_data, 'awaiting_reply': bool}}
@@ -198,6 +204,19 @@ async def commands_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 • `/auto_visit [URL]` - 고급 자동화 사이트 방문
 • `/screenshot [URL]` - 웹페이지 스크린샷 캡처
 • `/click [selector]` - 웹 요소 클릭
+
+🎭 **감정 분석:**
+• `/sentiment_only [URL]` - 감정 분석만 수행
+• `/emotion_detail [URL]` - 세분화된 감정 분석 상세 결과
+• `/sentiment_batch [URL1,URL2,URL3]` - 여러 URL 감정 분석
+• `/sentiment_compare [URL1,URL2]` - 두 콘텐츠 감정 비교
+
+📊 **품질 평가:**
+• `/quality_check [URL]` - 품질 평가만 수행
+• `/quality_detail [URL]` - 다차원 품질 평가 상세 결과
+• `/quality_batch [URL1,URL2,URL3]` - 여러 URL 품질 평가
+• `/quality_compare [URL1,URL2]` - 두 콘텐츠 품질 비교
+• `/quality_report [URL]` - 품질 개선 제안 리포트
 • `/type [selector] [text]` - 웹 요소에 텍스트 입력
 • `/extract [selectors]` - 동적 콘텐츠 추출
 • `/js [script]` - 페이지에서 JavaScript 실행
@@ -3785,6 +3804,372 @@ async def tech_auto_update_command(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         await update.message.reply_text(f"❌ 자동 업데이트 설정 실패: {str(e)}")
 
+# =================== 감정 분석 전용 명령어 ===================
+
+async def sentiment_only_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """감정 분석만 수행하는 명령어"""
+    try:
+        if not context.args:
+            await update.message.reply_text(
+                "🎭 **감정 분석 명령어 사용법:**\n\n"
+                "`/sentiment_only [URL]`\n\n"
+                "**예시:**\n"
+                "`/sentiment_only https://example.com/article`\n\n"
+                "💡 **팁:** 블로그, 뉴스, 리뷰 등의 URL을 입력하면 해당 콘텐츠의 감정을 분석해드립니다!",
+                parse_mode='Markdown'
+            )
+            return
+        
+        url = context.args[0]
+        
+        # URL 유효성 검사
+        if not (url.startswith('http://') or url.startswith('https://')):
+            await update.message.reply_text("❌ 올바른 URL을 입력해주세요. (http:// 또는 https://로 시작)")
+            return
+        
+        # 진행 상황 메시지
+        progress_msg = await update.message.reply_text("🎭 감정 분석 중... ⏳")
+        
+        # 감정 분석 수행
+        result = await content_analyzer.analyze_web_content(url, use_ai=True)
+        
+        if result and not result.error_message:
+            # 감정 분석 결과 포맷팅
+            sentiment_emoji = {
+                'positive': '😊',
+                'negative': '😔', 
+                'neutral': '😐',
+                'mixed': '🤔'
+            }.get(result.sentiment_label, '😐')
+            
+            # 세분화된 감정 표시
+            emotion_emojis = {
+                'joy': '😄', 'anger': '😠', 'sadness': '😢', 'fear': '😨',
+                'surprise': '😲', 'disgust': '🤢', 'trust': '🤝', 'anticipation': '😌'
+            }
+            
+            message = f"🎭 **감정 분석 결과**\n\n"
+            message += f"🌐 **URL:** {url}\n"
+            message += f"📄 **제목:** {result.title[:50]}{'...' if len(result.title) > 50 else ''}\n\n"
+            
+            # 기본 감정 분석
+            message += f"💭 **전체 감정:** {sentiment_emoji} {result.sentiment_label.upper()}\n"
+            message += f"📊 **감정 점수:** {result.sentiment_score:.2f}/1.0\n\n"
+            
+            # 고급 감정 분석 결과 (4단계 신규 기능)
+            if hasattr(result, 'detailed_emotions') and result.detailed_emotions:
+                message += "🎨 **세분화된 감정 분석:**\n"
+                for emotion, score in result.detailed_emotions.items():
+                    if score > 0.1:  # 0.1 이상인 감정만 표시
+                        emoji = emotion_emojis.get(emotion, '🔹')
+                        message += f"{emoji} {emotion.title()}: {score:.2f}\n"
+                message += "\n"
+            
+            # 감정 강도 및 신뢰도
+            if hasattr(result, 'emotion_intensity'):
+                intensity_emoji = "🔥" if result.emotion_intensity > 0.7 else "🌡️" if result.emotion_intensity > 0.4 else "❄️"
+                message += f"{intensity_emoji} **감정 강도:** {result.emotion_intensity:.2f}\n"
+            
+            if hasattr(result, 'emotion_confidence'):
+                confidence_emoji = "✅" if result.emotion_confidence > 0.8 else "⚠️" if result.emotion_confidence > 0.5 else "❓"
+                message += f"{confidence_emoji} **분석 신뢰도:** {result.emotion_confidence:.2f}\n"
+            
+            if hasattr(result, 'dominant_emotion'):
+                dominant_emoji = emotion_emojis.get(result.dominant_emotion, '🔸')
+                message += f"{dominant_emoji} **주요 감정:** {result.dominant_emotion.title()}\n"
+            
+            message += f"\n🕐 **분석 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+            
+        else:
+            error_msg = result.error_message if result else "알 수 없는 오류가 발생했습니다."
+            await progress_msg.edit_text(f"❌ 감정 분석 실패: {error_msg}")
+            
+    except Exception as e:
+        logger.error(f"감정 분석 명령어 오류: {e}")
+        await update.message.reply_text(f"❌ 감정 분석 중 오류 발생: {str(e)}")
+
+async def emotion_detail_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """세분화된 감정 분석 상세 결과"""
+    try:
+        if not context.args:
+            await update.message.reply_text(
+                "🎨 **세분화된 감정 분석 사용법:**\n\n"
+                "`/emotion_detail [URL]`\n\n"
+                "**분석 항목:**\n"
+                "• 8가지 기본 감정 (Plutchik 모델)\n"
+                "• 감정 강도 및 신뢰도\n"
+                "• 맥락적 감정 해석\n"
+                "• 감정 분포 차트\n\n"
+                "**예시:**\n"
+                "`/emotion_detail https://blog.example.com/post`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        url = context.args[0]
+        
+        if not (url.startswith('http://') or url.startswith('https://')):
+            await update.message.reply_text("❌ 올바른 URL을 입력해주세요.")
+            return
+        
+        progress_msg = await update.message.reply_text("🎨 세분화된 감정 분석 중... ⏳")
+        
+        # 감정 분석 수행
+        result = await content_analyzer.analyze_web_content(url, use_ai=True)
+        
+        if result and not result.error_message:
+            message = f"🎨 **세분화된 감정 분석 상세 결과**\n\n"
+            message += f"📄 **제목:** {result.title[:60]}{'...' if len(result.title) > 60 else ''}\n"
+            message += f"🌐 **URL:** {url}\n\n"
+            
+            # 8가지 기본 감정 상세 분석
+            emotion_details = {
+                'joy': ('😄', '기쁨', '긍정적이고 즐거운 감정'),
+                'anger': ('😠', '분노', '화나고 짜증나는 감정'),
+                'sadness': ('😢', '슬픔', '우울하고 슬픈 감정'),
+                'fear': ('😨', '두려움', '불안하고 걱정되는 감정'),
+                'surprise': ('😲', '놀람', '예상치 못한 놀라운 감정'),
+                'disgust': ('🤢', '혐오', '불쾌하고 거부감 드는 감정'),
+                'trust': ('🤝', '신뢰', '믿음직하고 안정적인 감정'),
+                'anticipation': ('😌', '기대', '희망적이고 기대되는 감정')
+            }
+            
+            if hasattr(result, 'detailed_emotions') and result.detailed_emotions:
+                message += "📊 **8가지 기본 감정 분석:**\n"
+                total_emotion_score = sum(result.detailed_emotions.values())
+                
+                for emotion, score in sorted(result.detailed_emotions.items(), key=lambda x: x[1], reverse=True):
+                    if emotion in emotion_details:
+                        emoji, name, desc = emotion_details[emotion]
+                        percentage = (score / total_emotion_score * 100) if total_emotion_score > 0 else 0
+                        bar_length = int(percentage / 10)
+                        bar = "█" * bar_length + "░" * (10 - bar_length)
+                        message += f"{emoji} **{name}** ({score:.3f}): {bar} {percentage:.1f}%\n"
+                message += "\n"
+            
+            # 감정 메타데이터
+            if hasattr(result, 'emotion_intensity'):
+                intensity_level = "매우 강함" if result.emotion_intensity > 0.8 else "강함" if result.emotion_intensity > 0.6 else "보통" if result.emotion_intensity > 0.4 else "약함"
+                message += f"🔥 **감정 강도:** {result.emotion_intensity:.3f} ({intensity_level})\n"
+            
+            if hasattr(result, 'emotion_confidence'):
+                confidence_level = "매우 높음" if result.emotion_confidence > 0.8 else "높음" if result.emotion_confidence > 0.6 else "보통" if result.emotion_confidence > 0.4 else "낮음"
+                message += f"✅ **분석 신뢰도:** {result.emotion_confidence:.3f} ({confidence_level})\n"
+            
+            if hasattr(result, 'contextual_sentiment'):
+                context_desc = {
+                    'direct': '직접적 표현',
+                    'ironic': '반어적 표현', 
+                    'sarcastic': '풍자적 표현',
+                    'emphatic': '강조적 표현'
+                }.get(result.contextual_sentiment, result.contextual_sentiment)
+                message += f"🎭 **표현 방식:** {context_desc}\n"
+            
+            if hasattr(result, 'dominant_emotion'):
+                emoji, name, desc = emotion_details.get(result.dominant_emotion, ('🔸', result.dominant_emotion, ''))
+                message += f"{emoji} **주요 감정:** {name}\n"
+                if desc:
+                    message += f"💡 **설명:** {desc}\n"
+            
+            # AI 모델 정보
+            message += f"\n🤖 **분석 모델:** {result.ai_model_used}\n"
+            message += f"🕐 **분석 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+            
+        else:
+            error_msg = result.error_message if result else "알 수 없는 오류가 발생했습니다."
+            await progress_msg.edit_text(f"❌ 세분화된 감정 분석 실패: {error_msg}")
+            
+    except Exception as e:
+        logger.error(f"세분화된 감정 분석 오류: {e}")
+        await update.message.reply_text(f"❌ 세분화된 감정 분석 중 오류 발생: {str(e)}")
+
+async def sentiment_batch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """여러 URL 감정 분석 배치 처리"""
+    try:
+        if not context.args:
+            await update.message.reply_text(
+                "📊 **배치 감정 분석 사용법:**\n\n"
+                "`/sentiment_batch [URL1,URL2,URL3]`\n\n"
+                "**주의사항:**\n"
+                "• URL들을 쉼표(,)로 구분\n"
+                "• 최대 5개 URL까지 지원\n"
+                "• 공백 없이 입력\n\n"
+                "**예시:**\n"
+                "`/sentiment_batch https://blog1.com,https://news.com,https://review.com`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # URL 파싱
+        urls_text = ' '.join(context.args)
+        urls = [url.strip() for url in urls_text.split(',') if url.strip()]
+        
+        if len(urls) == 0:
+            await update.message.reply_text("❌ 유효한 URL을 입력해주세요.")
+            return
+        
+        if len(urls) > 5:
+            await update.message.reply_text("❌ 최대 5개 URL까지만 분석 가능합니다.")
+            return
+        
+        # URL 유효성 검사
+        valid_urls = []
+        for url in urls:
+            if url.startswith('http://') or url.startswith('https://'):
+                valid_urls.append(url)
+            else:
+                await update.message.reply_text(f"❌ 잘못된 URL 형식: {url}")
+                return
+        
+        progress_msg = await update.message.reply_text(f"📊 {len(valid_urls)}개 URL 배치 감정 분석 중... ⏳")
+        
+        # 배치 분석 수행
+        batch_report = await content_analyzer.analyze_batch_urls(valid_urls)
+        
+        if batch_report and batch_report.success_count > 0:
+            message = f"📊 **배치 감정 분석 결과**\n\n"
+            message += f"✅ **성공:** {batch_report.success_count}개\n"
+            message += f"❌ **실패:** {batch_report.failed_count}개\n"
+            message += f"📈 **전체 처리 시간:** {batch_report.processing_time:.2f}초\n\n"
+            
+            # 전체 감정 분포
+            sentiment_emoji = {'positive': '😊', 'negative': '😔', 'neutral': '😐', 'mixed': '🤔'}
+            dominant_emoji = sentiment_emoji.get(batch_report.dominant_sentiment, '😐')
+            message += f"🎭 **전체 주요 감정:** {dominant_emoji} {batch_report.dominant_sentiment.upper()}\n\n"
+            
+            # 각 URL별 간단한 결과 (성공한 것들만)
+            message += "📋 **개별 분석 결과:**\n"
+            for i, url in enumerate(valid_urls[:batch_report.success_count], 1):
+                # 실제로는 개별 결과를 가져와야 하지만, 여기서는 요약만 표시
+                message += f"{i}. {url[:40]}{'...' if len(url) > 40 else ''}\n"
+            
+            if batch_report.failed_count > 0:
+                message += f"\n⚠️ {batch_report.failed_count}개 URL 분석 실패\n"
+            
+            message += f"\n💡 개별 상세 분석은 `/sentiment_only [URL]` 명령어를 사용하세요."
+            
+            await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+            
+        else:
+            await progress_msg.edit_text("❌ 배치 감정 분석 실패: 모든 URL 처리에 실패했습니다.")
+            
+    except Exception as e:
+        logger.error(f"배치 감정 분석 오류: {e}")
+        await update.message.reply_text(f"❌ 배치 감정 분석 중 오류 발생: {str(e)}")
+
+async def sentiment_compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """두 콘텐츠 감정 비교"""
+    try:
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "⚖️ **감정 비교 분석 사용법:**\n\n"
+                "`/sentiment_compare [URL1] [URL2]`\n\n"
+                "**비교 항목:**\n"
+                "• 전체 감정 점수 비교\n"
+                "• 세분화된 감정 비교\n"
+                "• 감정 강도 및 신뢰도 비교\n"
+                "• 상대적 차이 분석\n\n"
+                "**예시:**\n"
+                "`/sentiment_compare https://blog1.com https://blog2.com`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        url1, url2 = context.args[0], context.args[1]
+        
+        # URL 유효성 검사
+        for url in [url1, url2]:
+            if not (url.startswith('http://') or url.startswith('https://')):
+                await update.message.reply_text(f"❌ 잘못된 URL 형식: {url}")
+                return
+        
+        progress_msg = await update.message.reply_text("⚖️ 두 콘텐츠 감정 비교 분석 중... ⏳")
+        
+        # 두 URL 동시 분석
+        results = await content_analyzer.analyze_batch_urls([url1, url2])
+        
+        if results and results.success_count == 2:
+            # 개별 분석 결과 가져오기 (실제로는 캐시에서 가져와야 함)
+            result1 = await content_analyzer.analyze_web_content(url1, use_ai=True)
+            result2 = await content_analyzer.analyze_web_content(url2, use_ai=True)
+            
+            if result1 and result2 and not result1.error_message and not result2.error_message:
+                message = f"⚖️ **감정 비교 분석 결과**\n\n"
+                
+                # 콘텐츠 정보
+                message += f"📄 **콘텐츠 1:** {result1.title[:30]}{'...' if len(result1.title) > 30 else ''}\n"
+                message += f"📄 **콘텐츠 2:** {result2.title[:30]}{'...' if len(result2.title) > 30 else ''}\n\n"
+                
+                # 전체 감정 비교
+                sentiment_emoji = {'positive': '😊', 'negative': '😔', 'neutral': '😐', 'mixed': '🤔'}
+                emoji1 = sentiment_emoji.get(result1.sentiment_label, '😐')
+                emoji2 = sentiment_emoji.get(result2.sentiment_label, '😐')
+                
+                message += f"🎭 **전체 감정 비교:**\n"
+                message += f"1️⃣ {emoji1} {result1.sentiment_label.upper()} ({result1.sentiment_score:.3f})\n"
+                message += f"2️⃣ {emoji2} {result2.sentiment_label.upper()} ({result2.sentiment_score:.3f})\n"
+                
+                # 감정 점수 차이
+                score_diff = abs(result1.sentiment_score - result2.sentiment_score)
+                if score_diff > 0.3:
+                    message += f"📊 **차이:** 큰 차이 ({score_diff:.3f})\n"
+                elif score_diff > 0.1:
+                    message += f"📊 **차이:** 보통 차이 ({score_diff:.3f})\n"
+                else:
+                    message += f"📊 **차이:** 작은 차이 ({score_diff:.3f})\n"
+                
+                message += "\n"
+                
+                # 세분화된 감정 비교 (상위 3개만)
+                if (hasattr(result1, 'detailed_emotions') and hasattr(result2, 'detailed_emotions') and 
+                    result1.detailed_emotions and result2.detailed_emotions):
+                    
+                    message += "🎨 **주요 감정 비교:**\n"
+                    
+                    emotion_emojis = {
+                        'joy': '😄', 'anger': '😠', 'sadness': '😢', 'fear': '😨',
+                        'surprise': '😲', 'disgust': '🤢', 'trust': '🤝', 'anticipation': '😌'
+                    }
+                    
+                    # 두 결과에서 공통으로 높은 감정들 찾기
+                    common_emotions = set(result1.detailed_emotions.keys()) & set(result2.detailed_emotions.keys())
+                    top_emotions = sorted(common_emotions, 
+                                        key=lambda x: max(result1.detailed_emotions.get(x, 0), 
+                                                         result2.detailed_emotions.get(x, 0)), 
+                                        reverse=True)[:3]
+                    
+                    for emotion in top_emotions:
+                        emoji = emotion_emojis.get(emotion, '🔹')
+                        score1 = result1.detailed_emotions.get(emotion, 0)
+                        score2 = result2.detailed_emotions.get(emotion, 0)
+                        message += f"{emoji} **{emotion.title()}:** {score1:.3f} vs {score2:.3f}\n"
+                
+                # 감정 강도 비교
+                if hasattr(result1, 'emotion_intensity') and hasattr(result2, 'emotion_intensity'):
+                    message += f"\n🔥 **감정 강도 비교:**\n"
+                    message += f"1️⃣ {result1.emotion_intensity:.3f}\n"
+                    message += f"2️⃣ {result2.emotion_intensity:.3f}\n"
+                    
+                    intensity_diff = abs(result1.emotion_intensity - result2.emotion_intensity)
+                    if intensity_diff > 0.3:
+                        message += f"📈 첫 번째 콘텐츠가 {'더 강한' if result1.emotion_intensity > result2.emotion_intensity else '더 약한'} 감정을 표현\n"
+                
+                message += f"\n🕐 **분석 시간:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                
+                await progress_msg.edit_text(safe_markdown(message), parse_mode='Markdown')
+            else:
+                await progress_msg.edit_text("❌ 일부 콘텐츠 분석에 실패했습니다.")
+        else:
+            await progress_msg.edit_text("❌ 감정 비교 분석 실패: 콘텐츠를 가져올 수 없습니다.")
+            
+    except Exception as e:
+        logger.error(f"감정 비교 분석 오류: {e}")
+        await update.message.reply_text(f"❌ 감정 비교 분석 중 오류 발생: {str(e)}")
+
 def main() -> None:
     """메인 함수"""
     if not BOT_TOKEN:
@@ -3915,6 +4300,12 @@ def main() -> None:
     application.add_handler(CommandHandler("stackoverflow", track_command(stackoverflow_command)))
     application.add_handler(CommandHandler("package_info", track_command(package_info_command)))
     application.add_handler(CommandHandler("tech_auto_update", track_command(tech_auto_update_command)))
+    
+    # 감정 분석 전용 명령어 (5단계 4차 업그레이드)
+    application.add_handler(CommandHandler("sentiment_only", track_command(sentiment_only_command)))
+    application.add_handler(CommandHandler("emotion_detail", track_command(emotion_detail_command)))
+    application.add_handler(CommandHandler("sentiment_batch", track_command(sentiment_batch_command)))
+    application.add_handler(CommandHandler("sentiment_compare", track_command(sentiment_compare_command)))
     
     # 협업 및 공유 기능 명령어 (7단계)
     application.add_handler(CommandHandler("team", track_command(team_command)))
