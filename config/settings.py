@@ -37,21 +37,19 @@ AI_CONFIG = {
     'GEMINI_WARNING_THRESHOLD': 0.95,  # 95% 도달시 경고
 }
 
-# 파일 경로 설정
+# 파일 경로 설정 (클라우드 기반)
 PATHS = {
     'SRC_DIR': PROJECT_ROOT / 'src',
-    'DATA_DIR': PROJECT_ROOT / 'data',
     'LOGS_DIR': PROJECT_ROOT / 'logs',
-    'HOMEWORK_DATA': PROJECT_ROOT / 'src' / 'homework_data.json',
-    'USAGE_TRACKER': PROJECT_ROOT / 'src' / 'usage_tracker.json',
+    # 로컬 데이터 파일 경로 제거됨 - 모든 데이터는 구글 드라이브에 저장
 }
 
-# 교과서 경로 설정
+# 교과서 설정 (클라우드 기반)
 TEXTBOOK_CONFIG = {
-    'BASE_PATH': "G:\\Ddrive\\BatangD\\task\\workdiary\\36. 팜솔라\\수업",
     'WEEK_FORMAT': "{week}주차{lesson}번째",
     'MAX_WEEKS': 12,
     'LESSONS_PER_WEEK': 2,
+    # 로컬 BASE_PATH 제거됨 - 교과서는 구글 드라이브에서 관리
 }
 
 # 태양광 계산 기본값
@@ -86,9 +84,9 @@ def validate_config():
     if not AI_CONFIG['OPENAI_API_KEY']:
         errors.append("OPENAI_API_KEY가 설정되지 않았습니다.")
     
-    # 디렉토리 생성
+    # 필요한 디렉토리 생성 (로컬 로그 디렉토리만)
     for path_name, path in PATHS.items():
-        if path_name.endswith('_DIR'):
+        if path_name.endswith('_DIR') and isinstance(path, Path):
             path.mkdir(exist_ok=True)
     
     return errors
