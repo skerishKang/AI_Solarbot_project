@@ -26,8 +26,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 
-from src.user_auth_manager import user_auth_manager
-from src.user_drive_manager import user_drive_manager
+from user_auth_manager import user_auth_manager
+from user_drive_manager import user_drive_manager
 from googleapiclient.discovery import build
 
 class AdvancedWebAutomation:
@@ -1365,38 +1365,74 @@ class AsyncWebCrawler:
         return dev_sites[:max_results]
     
     def _filter_relevant_content(self, results: List[Dict], query: str) -> List[Dict]:
-        """검색 쿼리와 관련성이 높은 콘텐츠 필터링"""
-        query_keywords = query.lower().split()
-        relevant_results = []
+        """검색 쿼리와 관련성이 높은 결과만 필터링"""
+        if not query:
+            return results
+        
+        query_words = set(query.lower().split())
+        filtered_results = []
         
         for result in results:
-            relevance_score = 0
-            
-            # 제목에서 키워드 매칭
             title = result.get('title', '').lower()
-            for keyword in query_keywords:
-                if keyword in title:
-                    relevance_score += 3
+            content = result.get('description', '').lower()
             
-            # 설명에서 키워드 매칭
-            description = result.get('description', '').lower()
-            for keyword in query_keywords:
-                if keyword in description:
-                    relevance_score += 2
+            # 제목과 내용에서 쿼리 단어 매칭 점수 계산
+            title_matches = sum(1 for word in query_words if word in title)
+            content_matches = sum(1 for word in query_words if word in content)
             
-            # 코드 블록에서 키워드 매칭
-            for code_block in result.get('code_blocks', []):
-                code_text = code_block.get('code', '').lower()
-                for keyword in query_keywords:
-                    if keyword in code_text:
-                        relevance_score += 1
+            # 관련성 점수 계산 (제목 매칭에 더 높은 가중치)
+            relevance_score = title_matches * 2 + content_matches
             
-            # 관련성 점수가 1 이상인 경우만 포함
-            if relevance_score >= 1:
+            if relevance_score > 0:
                 result['relevance_score'] = relevance_score
-                relevant_results.append(result)
+                filtered_results.append(result)
         
-        # 관련성 점수 순으로 정렬
-        relevant_results.sort(key=lambda x: x['relevance_score'], reverse=True)
+        # 관련성 점수로 정렬
+        filtered_results.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
         
-        return relevant_results 
+        return filtered_results
+
+# 웹 콘텐츠 가져오기 유틸리티 함수
+async def fetch_content_with_fallback(url: str) -> Optional[str]:
+    """웹 콘텐츠 가져오기 - 여러 방법으로 시도"""
+    import aiohttp
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # 1차 시도: web_search_ide 활용
+        web_search = WebSearchIDE()
+        result = web_search.visit_site("content_analyzer", url, extract_code=False)
+        
+        if result.get('success') and result.get('content_preview'):
+            return result['content_preview']
+        
+        # 2차 시도: 직접 HTTP 요청
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=10) as response:
+                if response.status == 200:
+                    html_content = await response.text()
+                    
+                    # BeautifulSoup으로 파싱
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    
+                    # 스크립트와 스타일 태그 제거
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+                    
+                    # 텍스트 추출 및 정리
+                    text_content = soup.get_text()
+                    clean_text = ' '.join(text_content.split())
+                    
+                    return clean_text if clean_text else None
+                    
+    except Exception as e:
+        logger.error(f"콘텐츠 가져오기 실패: {url} - {e}")
+        return None
+    
+    return None 

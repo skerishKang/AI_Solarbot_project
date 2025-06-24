@@ -8,7 +8,7 @@ import io
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import logging
-from src.google_drive_handler import drive_handler
+from google_drive_handler import drive_handler
 
 logger = logging.getLogger(__name__)
 

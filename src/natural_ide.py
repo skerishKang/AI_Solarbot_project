@@ -10,9 +10,9 @@ import subprocess
 import tempfile
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
-from src.user_auth_manager import user_auth_manager
-from src.user_drive_manager import user_drive_manager
-from src.web_search_ide import web_search_ide
+from user_auth_manager import user_auth_manager
+from user_drive_manager import user_drive_manager
+from web_search_ide import web_search_ide
 from googleapiclient.discovery import build
 
 class CloudIDE:

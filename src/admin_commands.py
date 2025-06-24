@@ -9,7 +9,7 @@ from typing import List
 from telegram import Update
 from telegram.ext import ContextTypes
 from functools import wraps
-from src.monitoring import bot_monitor
+from monitoring import bot_monitor
 
 # 관리자 ID 목록 (환경변수나 설정 파일에서 로드하는 것이 좋음)
 ADMIN_IDS = [

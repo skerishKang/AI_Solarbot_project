@@ -62,4 +62,4 @@ finally {
     Write-Host "   🛑 AI_Solarbot이 종료되었습니다." -ForegroundColor Red
     Write-Host "====================================" -ForegroundColor Cyan
     Read-Host "계속하려면 Enter를 누르세요"
-} 
+}

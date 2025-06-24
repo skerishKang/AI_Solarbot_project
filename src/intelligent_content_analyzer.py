@@ -22,9 +22,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 기존 시스템 모듈 import
-from src.ai_handler import AIHandler
-from src.web_search_ide import WebSearchIDE
-from src.google_drive_handler import GoogleDriveHandler
+from ai_handler import AIHandler
+from web_search_ide import WebSearchIDE
+from google_drive_handler import GoogleDriveHandler
+from ai_integration_engine import AIIntegrationEngine
 
 @dataclass
 class ContentAnalysisResult:
@@ -88,6 +89,10 @@ class IntelligentContentAnalyzer:
             self.ai_handler = AIHandler()
             self.web_search = WebSearchIDE()
             self.drive_handler = GoogleDriveHandler()
+            
+            # AI 통합 엔진 초기화
+            from ai_integration_engine import AIIntegrationEngine
+            self.ai_engine = AIIntegrationEngine(self.ai_handler)
             
             # 캐시 설정 (2시간 TTL)
             self.analysis_cache = TTLCache(maxsize=500, ttl=7200)
@@ -2474,7 +2479,7 @@ URL: {url}
                 vocab_diversity = language_quality.get('vocabulary_diversity', 0)
                 if vocab_diversity > 0:
                     report_lines.append(f"   📚 어휘 다양성: {vocab_diversity:.1f}%")
-            
+             
             report_lines.append("")
             
             # 종합 평가
@@ -3509,6 +3514,9 @@ URL: {url}
             return "\n".join(report_lines)
             
         except Exception as e:
+            logger.error(f"품질 리포트 생성 오류: {e}")
+            return f"품질 리포트 생성 중 오류가 발생했습니다: {str(e)}"
+
 # 전역 인스턴스 생성
 analyzer = None
 

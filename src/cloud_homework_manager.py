@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-from src.user_auth_manager import user_auth_manager
+from user_auth_manager import user_auth_manager
 
 class CloudHomeworkManager:
     """구글 드라이브 기반 과제 관리 시스템"""

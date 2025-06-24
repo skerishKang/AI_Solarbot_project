@@ -7,8 +7,8 @@ import json
 import io
 from datetime import datetime
 from typing import Dict, List, Optional
-from src.google_drive_handler import drive_handler
-from src.user_drive_manager import user_drive_manager
+from google_drive_handler import drive_handler
+from user_drive_manager import user_drive_manager
 
 class HomeworkManager:
     def __init__(self):

@@ -8,8 +8,8 @@ import io
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
-from src.google_drive_handler import drive_handler
-from src.workspace_template import WorkspaceTemplate
+from google_drive_handler import drive_handler
+from workspace_template import WorkspaceTemplate
 
 class UserDriveManager:
     def __init__(self):

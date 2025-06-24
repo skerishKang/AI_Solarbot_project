@@ -12,8 +12,8 @@ import io
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from src.google_drive_handler import drive_handler
-from src.user_drive_manager import UserDriveManager
+from google_drive_handler import drive_handler
+from user_drive_manager import UserDriveManager
 
 class CollaborationManager:
     def __init__(self):
